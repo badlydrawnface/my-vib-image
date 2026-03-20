@@ -57,6 +57,7 @@ stages:
         - lutris
         - mangohud
         - gamescope
+        - protontricks
 
   - name: example-modules # Sample module demonstrating importing local and remote modules
     type: includes
