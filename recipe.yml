@@ -53,7 +53,8 @@ stages:
     type: apt
     sources:
       - packages:
-        - steam
+        - steam-installer
+        - steam-devices
         - lutris
         - mangohud
         - gamescope
