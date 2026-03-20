@@ -1,171 +1,100 @@
-name: Vib Build
+name: bdface's custom vib image
+id: bdf-custom-vib
+vibversion: 0.0.1
 
-on:
-  push:
-    branches: [ "main" ]
-    tags:
-      - '*'
-  schedule:
-    - cron: '21 */6 * * *'
-  pull_request:
-  workflow_dispatch:
+stages:
+- id: build
+  base: ghcr.io/vanilla-os/desktop:main # Optionally, Replace this image URL with a different one i.e. nvidia:main, etc
+  addincludes: true
+  singlelayer: false
+  labels:
+    maintainer: badlydrawnface
+  args:
+    DEBIAN_FRONTEND: noninteractive # Set the image environment as non-interactive
 
-env:
-  CUSTOM_IMAGE_NAME: bdf-custom-vib
-  BUILDX_NO_DEFAULT_ATTESTATIONS: 1
+  # Commands to run first before building the modules
+  runs:
+    commands:
+      - echo 'APT::Install-Recommends "1";' > /etc/apt/apt.conf.d/01norecommends
 
-jobs:
-  check_update:
-    runs-on: ubuntu-latest
+  modules:
+  - name: init-setup
+    type: shell
+    commands:
+    - lpkg --unlock
+    - apt-get update
 
-    outputs:
-      has_updates: ${{ steps.set_output.outputs.has_updates }}
-      base_image: ${{ steps.read_base_recipe.outputs.base_image }}
+  # Put your custom actions below this comment
 
-    permissions:
-      contents: write # Allow actions to create a digest
+  - name: install-util-packages
+    type: apt
+    sources:
+      - packages:
+        - neovim
+        - lazygit
+        - fastfetch
+        - eza
+        - fzr
+        - bat
+        - ripgrep
+        - zoxide
+        - delta
+        - fd-find
+        - btop
 
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
+  - name: install-ghostty
+    type: shell
+    commands:
+    - curl -sS https://debian.griffo.io/EA0F721D231FDD3A0A17B9AC7808B4DD62C41256.asc | gpg --dearmor --yes -o /etc/apt/trusted.gpg.d/debian.griffo.io.gpg
+    - echo "deb https://debian.griffo.io/apt $(lsb_release -sc 2>/dev/null) main" | tee /etc/apt/sources.list.d/debian.griffo.io.list
+    - apt update && apt install -y ghostty
 
-      - name: Install dependencies
-        run: sudo apt-get install -y jq skopeo libfyaml-utils
+  - name: install-gaming-packages
+    type: apt
+    sources:
+      - packages:
+        - steam
+        - lutris
+        - mangohud
+        - gamescope
 
-      - name: Read base image name from recipe
-        id: read_base_recipe
-        run: |
-          BASE_IMAGE="$(fy-filter -f recipe.yml /stages/-1/base)"
-          echo The base image is $BASE_IMAGE
-          if [ -z $BASE_IMAGE ]; then exit 1; fi
-          echo "base_image=$BASE_IMAGE" >> "$GITHUB_OUTPUT"
-          echo "BASE_IMAGE=$BASE_IMAGE" >> "$GITHUB_ENV"
+  - name: example-modules # Sample module demonstrating importing local and remote modules
+    type: includes
+    includes: 
+      - modules/50-install-debs.yml # Sample local module present in this repository
+      # - gh:vanilla-os/dev-image:main:modules/00-basics.yml # Sample GitHub remote module in the format: `gh:your-name/your-repo:branch:modules/file.yml`
+      # - https://raw.githubusercontent.com/Vanilla-OS/dev-image/main/modules/05-go.yml # Sample full URL remote module
 
-      - name: Get last successful run
-        if: ${{ github.ref_type == 'branch' }}
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        continue-on-error: true
-        run: |
-          gh run list -b "${{ github.ref_name }}" -w "${{ github.workflow }}" -s "success" -L 1 --json databaseId > last_run.json
-          echo "LAST_RUN_ID=$(jq -r '.[0].databaseId' last_run.json)" >> "$GITHUB_ENV"
+  # Put your custom actions above this comment
 
-      - name: Download the previous digest
-        uses: actions/download-artifact@v7
-        continue-on-error: true
-        with:
-          name: digest
-          github-token: ${{ github.token }}
-          run-id: ${{ env.LAST_RUN_ID }}
+  - name: set-image-name-abroot
+    type: includes
+    includes:
+      - modules/80-set-image-abroot-config.yml
 
-      - name: Check if there was an update to the base image
-        run: |
-          touch digest.txt
-          mv digest.txt last_digest.txt
-          skopeo inspect --raw docker://${{ env.BASE_IMAGE }} | sha256sum > digest.txt
-          echo Old digest is: $(cat last_digest.txt)
-          echo New digest is: $(cat digest.txt)
-          echo "HAS_UPDATES=$(cmp -s digest.txt last_digest.txt; echo $?)" >> "$GITHUB_ENV"
+  - name: cleanup
+    type: shell
+    commands:
+    - apt-get autoremove -y
+    - apt-get clean
+    - lpkg --lock
 
-      - name: Upload current digest
-        uses: actions/upload-artifact@v6
-        with:
-          name: digest
-          path: digest.txt
+  - name: fsguard
+    type: fsguard
+    CustomFsGuard: false
+    FsGuardLocation: "/usr/sbin/FsGuard"
+    GenerateKey: true
+    FilelistPaths: ["/usr/bin"]
+    modules:
+      - name: remove-prev-fsguard
+        type: shell
+        commands:
+          - rm -rf /FsGuard 
+          - rm -f ./minisign.pub ./minisign.key 
+          - chmod +x /usr/sbin/init
 
-      - name: Set output
-        id: set_output
-        run: |
-          if [ ${{ github.event_name == 'schedule'}} == false ]
-          then
-            echo action was manually run, updating either way
-            echo "has_updates=true" >> "$GITHUB_OUTPUT"
-          elif [ ${{ env.HAS_UPDATES }} == 1 ]
-          then
-            echo base image was updated since the last build
-            echo "has_updates=true" >> "$GITHUB_OUTPUT"
-          else
-            echo no updates to the base image since the last build
-            echo "has_updates=false" >> "$GITHUB_OUTPUT"
-          fi
-
-  build:
-    runs-on: ubuntu-latest
-    needs: check_update
-    if: ${{ needs.check_update.outputs.has_updates == 'true' }}
-
-    permissions:
-      packages: write # Allow pushing images to GHCR
-      attestations: write # To create and write attestations
-      id-token: write # Additional permissions for the persistence of the attestations
-
-    steps:
-    - uses: actions/checkout@v6
-
-    - uses: vanilla-os/vib-gh-action@v1.0.7
-      with:
-        recipe: 'recipe.yml'
-        plugins: 'Vanilla-OS/vib-fsguard:v1.5.3'
-
-    - uses: actions/upload-artifact@v6
-      with:
-        name: Containerfile
-        path: Containerfile
-
-    - name: Generate image name
-      run: |
-        REPO_OWNER_LOWERCASE="$(echo ${{ github.repository_owner }} | tr '[:upper:]' '[:lower:]')"
-        echo "REPO_OWNER_LOWERCASE=$REPO_OWNER_LOWERCASE">> "$GITHUB_ENV"
-        echo "IMAGE_URL=ghcr.io/$REPO_OWNER_LOWERCASE/${{ env.CUSTOM_IMAGE_NAME }}">> "$GITHUB_ENV"
-
-    - name: Set image info
-      run: |
-        echo -n "${{ needs.check_update.outputs.base_image }}" > ./includes.container/image-info/base-image-name
-        echo -n "${{ env.REPO_OWNER_LOWERCASE }}/${{ env.CUSTOM_IMAGE_NAME }}" > ./includes.container/image-info/image-name
-
-    - name: Docker meta
-      id: docker_meta
-      uses: docker/metadata-action@v5
-      with:
-        images: |
-          ${{ env. IMAGE_URL }}
-        tags: |
-          type=semver,pattern={{version}}
-          type=semver,pattern={{major}}.{{minor}}
-          type=semver,pattern={{raw}}
-          type=semver,pattern=v{{major}}
-          type=ref,event=branch
-
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
-
-    - name: Login to GitHub Package Registry
-      uses: docker/login-action@v3
-      if: ${{ github.event_name != 'pull_request' }}
-      with:
-        registry: ghcr.io
-        username: ${{ github.repository_owner }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Build and Push the Docker image
-      id: push
-      uses: docker/build-push-action@v6
-      with:
-        context: .
-        file: Containerfile
-        push: ${{ github.event_name != 'pull_request' }}
-        tags: ${{ steps.docker_meta.outputs.tags }}
-        labels: ${{ steps.docker_meta.outputs.labels }}
-        cache-from: type=gha
-        cache-to: type=gha,mode=max
-        platforms: linux/amd64
-        provenance: false
-
-    - name: Attest pushed image
-      uses: actions/attest-build-provenance@v3
-      id: attest
-      if: ${{ github.event_name != 'pull_request' }}
-      with:
-        subject-name: ${{ env.IMAGE_URL }}
-        subject-digest: ${{ steps.push.outputs.digest }}
-        push-to-registry: false
+  - name: cleanup2
+    type: shell
+    commands:
+      - rm -rf /tmp/*
+      - rm -rf /var/tmp/*
