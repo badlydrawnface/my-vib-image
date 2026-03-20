@@ -21,6 +21,8 @@ stages:
   - name: init-setup
     type: shell
     commands:
+     # enable i386 packages
+    - dpkg --add-architecture i386
     - lpkg --unlock
     - apt-get update
 
@@ -59,6 +61,25 @@ stages:
         - mangohud
         - gamescope
         - protontricks
+
+        # dependencies
+        - libliftoff0
+        - libwlroots-0.18
+        - 7zip
+        - cabextract
+        - mesa-utils
+        - python3-gi-cairo
+        - python3-magic
+        - vulkan-tools
+        - python3-evdev
+        - winetricks
+        - libfmt10
+        - libspdlog1.15-fmt10
+        - mangohudctl
+        - mangoplot
+        - python3-vdf
+        - steam-libs
+        - steam-libs-i386
 
   - name: example-modules # Sample module demonstrating importing local and remote modules
     type: includes
