@@ -1,6 +1,6 @@
 name: bdface's custom vib image
 id: bdf-custom-vib
-vibversion: 0.0.1
+vibversion: 1.0.0
 
 stages:
 - id: build
