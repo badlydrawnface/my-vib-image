@@ -52,7 +52,7 @@ stages:
   #   - echo "deb https://debian.griffo.io/apt/dists/sid/main" | tee /etc/apt/sources.list.d/debian.griffo.io.list
   #   - apt update && apt install -y ghostty
 
-  - name: install-gaming-packages
+- name: install-gaming-packages
     type: apt
     sources:
       - packages:
@@ -74,12 +74,15 @@ stages:
         - vulkan-tools
         - python3-evdev
         - winetricks
+        - wine
         - libfmt10
         - libspdlog1.15-fmt10
         - mangohudctl
         - mangoplot
         - python3-vdf
         - steam-libs
+    options:
+      - fixMissing: true
         
   - name: example-modules # Sample module demonstrating importing local and remote modules
     type: includes
